@@ -9,7 +9,15 @@ import 'package:open_filex/open_filex.dart';
 
 /// Android Emulator: 10.0.2.2 raggiunge il PC host.
 /// Smartphone fisico: sostituire con l'IP LAN del computer che esegue il backend.
-const String apiBaseUrl = 'http://10.0.2.2:8080';
+///const String apiBaseUrl = 'http://10.0.2.2:8080';
+
+
+/// Emulatore Android: usa 10.0.2.2.
+/// Smartphone fisico via USB: usa 127.0.0.1 con adb reverse.
+const String apiBaseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: 'http://10.0.2.2:8080',
+);
 
 void main() => runApp(const WorklyApp());
 
@@ -447,32 +455,29 @@ class _CompanyPageState extends State<CompanyPage> {
     }
   }
 
+
   Future<void> _createJob() async {
-    final title = TextEditingController(), description = TextEditingController();
-    final key = GlobalKey<FormState>();
-    final created = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-      title: const Text('Nuovo annuncio'),
-      content: SizedBox(width: 420, child: Form(key: key, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        TextFormField(controller: title, decoration: const InputDecoration(labelText: 'Titolo'), validator: (v) => v == null || v.trim().isEmpty ? 'Obbligatorio' : null),
-        const SizedBox(height: 12),
-        TextFormField(controller: description, minLines: 4, maxLines: 7, decoration: const InputDecoration(labelText: 'Descrizione'), validator: (v) => v == null || v.trim().isEmpty ? 'Obbligatoria' : null),
-      ]))),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annulla')),
-        FilledButton(onPressed: () async {
-          if (!key.currentState!.validate()) return;
-          try {
-            await Api.request('POST', '/api/jobs', body: {'title': title.text.trim(), 'description': description.text.trim()});
-            if (ctx.mounted) Navigator.pop(ctx, true);
-          } catch (e) {
-            if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(e.toString())));
-          }
-        }, child: const Text('Pubblica')),
-      ],
-    ));
-    title.dispose(); description.dispose();
-    if (created == true) { await _loadMine(); widget.onChanged(); widget.onMessage('Annuncio pubblicato correttamente', false); }
+    if (!mounted) return;
+
+    final created = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => const CreateJobDialog(),
+    );
+
+    if (!mounted || created != true) return;
+
+    await _loadMine();
+
+    if (!mounted) return;
+
+    widget.onChanged();
+
+    widget.onMessage(
+      'Annuncio pubblicato correttamente',
+      false,
+    );
   }
+
 
   @override
   Widget build(BuildContext context) => RefreshIndicator(
@@ -500,6 +505,150 @@ class _CompanyPageState extends State<CompanyPage> {
     ]),
   );
 }
+
+
+class CreateJobDialog extends StatefulWidget {
+  const CreateJobDialog({super.key});
+
+  @override
+  State<CreateJobDialog> createState() =>
+      _CreateJobDialogState();
+}
+
+class _CreateJobDialogState extends State<CreateJobDialog> {
+  final _formKey = GlobalKey<FormState>();
+
+  final _titleController = TextEditingController();
+  final _descriptionController = TextEditingController();
+
+  bool _sending = false;
+  String? _error;
+
+  Future<void> _submit() async {
+    if (_sending) return;
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
+    }
+
+    setState(() {
+      _sending = true;
+      _error = null;
+    });
+
+    try {
+      await Api.request(
+        'POST',
+        '/api/jobs',
+        body: {
+          'title': _titleController.text.trim(),
+          'description': _descriptionController.text.trim(),
+        },
+      );
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+        _sending = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Nuovo annuncio'),
+      content: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: _titleController,
+                  decoration: const InputDecoration(
+                    labelText: 'Titolo',
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Obbligatorio';
+                    }
+                    return null;
+                  },
+                ),
+
+                const SizedBox(height: 12),
+
+                TextFormField(
+                  controller: _descriptionController,
+                  minLines: 4,
+                  maxLines: 7,
+                  decoration: const InputDecoration(
+                    labelText: 'Descrizione',
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Obbligatoria';
+                    }
+                    return null;
+                  },
+                ),
+
+                if (_error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _sending
+              ? null
+              : () => Navigator.of(context).pop(false),
+          child: const Text('Annulla'),
+        ),
+
+        FilledButton(
+          onPressed: _sending ? null : _submit,
+          child: _sending
+              ? const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+            ),
+          )
+              : const Text('Pubblica'),
+        ),
+      ],
+    );
+  }
+}
+
+
+
 
 class ApplicationsPage extends StatefulWidget {
   final Map<String, dynamic> job;
